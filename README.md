@@ -9,7 +9,7 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 ## Features
 
 - **Group Standings** — Full table for every group (A–L), with qualification spots highlighted in green. Supports `--group` flag to filter to a single group.
-- **Finished Matches** — Paginated list of all completed results with scores.
+- **Finished Matches** — Paginated list of all completed results with scores, sorted most recent first.
 - **Upcoming & Live Matches** — Full fixture list with kickoff times; live matches are separated into their own filter and highlighted.
 - **Live Match Filter** — Dedicated "Live Now" view that appears in the menu only when matches are in progress.
 - **Match Center** — Per-match sub-menu with three views:
@@ -17,7 +17,7 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
   - ⏱ **Timeline** — goals, cards, substitutions with in/out names, own goals, and proper minute + added-time display
   - 👥 **Lineups** — starters and substitutes side-by-side with shirt numbers
 - **Live Refresh** — `[R]` inside a live match center re-fetches that match; `[R]` from the main menu refreshes all data.
-- **In-memory Cache** — Match details are fetched once per session. Revisiting the same Match Center is instant.
+- **Live Score Sync** — Every time a match list renders, live match scores are silently re-fetched in the background via a thread pool, so the list is always current without any manual refresh.
 - **Paginated Match Lists** — 20 matches per page with `[N]ext` / `[P]rev` navigation.
 - **Team Search** — Filter any match list by typing `/` and a team name.
 - **ANSI Color Output** — Goals in green, red cards in red, yellow cards in yellow, live badges highlighted. Degrades gracefully on terminals without color support (including Windows CMD).
@@ -39,7 +39,7 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 
 ```bash
 # Clone or download the script
-git clone https://github.com/Lunatic16/world-cup-terminal.git
+git clone https://github.com/yourname/world-cup-terminal.git
 cd world-cup-terminal
 
 # No pip install needed — just run it
@@ -132,12 +132,16 @@ All menus accept single-key keyboard input. No mouse required.
   4   Morocco                   3   0   2   1   -2    2
 ```
 
-### Match List (live badge)
+### Match List (finished, most recent first)
 
 ```
-  [  1]  Jun 15, 18:00    Brazil                2-1   Argentina              LIVE
-  [  2]  Jun 16, 15:00    France                vs    Germany
+  [  1]  Jun 17, 21:00   Argentina             3-0   Canada
+  [  2]  Jun 17, 18:00   Spain                 2-1   Morocco
+  [  3]  Jun 16, 15:00   France                vs    Germany         LIVE
+  [  4]  Jun 15, 18:00   Brazil                2-1   Argentina
 ```
+
+Upcoming and live matches are sorted soonest first; finished matches are sorted most recent first.
 
 ### Timeline
 
