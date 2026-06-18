@@ -339,9 +339,9 @@ class WorldCupApp:
     # Match detail fetching (with cache)
     # ------------------------------------------------------------------
 
-    def _fetch_match_props(self, match: dict) -> dict | None:
+    def _fetch_match_props(self, match: dict, force: bool = False) -> dict | None:
         mid = match["id"]
-        if mid in self._match_cache:
+        if not force and mid in self._match_cache:
             return self._match_cache[mid]
 
         slug = match["page_url"]
@@ -351,11 +351,53 @@ class WorldCupApp:
             return None
 
         url = f"https://www.fotmob.com{slug}"
-        print(col(f"🔄  Loading match details for {match['home']} vs {match['away']} …", C.CYAN))
+        if not force:
+            print(col(f"🔄  Loading match details for {match['home']} vs {match['away']} …", C.CYAN))
         props = fetch_nextjs_data(url)
         if props:
             self._match_cache[mid] = props
+            self._sync_score_to_list(match, props)
         return props
+
+    def _refresh_live_scores(self, matches: list) -> None:
+        """
+        Silently re-fetch scores for all live matches in *matches* using a
+        thread pool, updating matches_list in place. Called each time the
+        match list redraws so scores are current without any user action.
+        """
+        live = [m for m in matches if classify_match(m) == "live" and m.get("page_url")]
+        if not live:
+            return
+
+        def _fetch_one(m):
+            slug = m["page_url"].split("#")[0]
+            url  = f"https://www.fotmob.com{slug}"
+            props = fetch_nextjs_data(url)
+            if props:
+                self._match_cache[m["id"]] = props
+                self._sync_score_to_list(m, props)
+
+        with ThreadPoolExecutor(max_workers=min(len(live), 4)) as pool:
+            list(pool.map(_fetch_one, live))
+
+    def _sync_score_to_list(self, match: dict, props: dict) -> None:
+        """
+        Write the live score from match-detail props back into matches_list
+        so the list view always reflects the latest known score.
+        """
+        score    = safe_get(props, "header", "status", "scoreStr", default=None)
+        finished = safe_get(props, "header", "status", "finished", default=None)
+        started  = safe_get(props, "header", "status", "started",  default=None)
+        if score is None:
+            return
+        for m in self.matches_list:
+            if m["id"] == match["id"]:
+                m["score_str"] = score
+                if finished is not None:
+                    m["finished"] = bool(finished)
+                if started is not None:
+                    m["started"]  = bool(started)
+                break
 
     # ------------------------------------------------------------------
     # Standings
@@ -444,7 +486,7 @@ class WorldCupApp:
             if q and q not in m["home"].lower() and q not in m["away"].lower():
                 continue
             results.append(m)
-        results.sort(key=lambda x: x["utc_time"])
+        results.sort(key=lambda x: x["utc_time"], reverse=(mode == "finished"))
         return results
 
     def show_matches(self, mode: str = "finished") -> None:
@@ -461,6 +503,9 @@ class WorldCupApp:
         page = 0
 
         while True:
+            # Silently refresh scores for any live matches before rendering
+            self._refresh_live_scores(self._filter_matches(mode, team_query))
+
             filtered = self._filter_matches(mode, team_query)
             page_items, total_pages, page = paginate(filtered, page)
             offset = page * PAGE_SIZE
@@ -579,13 +624,17 @@ class WorldCupApp:
             if choice == "b":
                 break
             elif choice == "r" and cls == "live":
-                # Evict cache entry and re-fetch
-                self._match_cache.pop(match["id"], None)
-                props = self._fetch_match_props(match)
+                # Force re-fetch bypassing cache; _sync_score_to_list
+                # will update matches_list so the list view is current too
+                props = self._fetch_match_props(match, force=True)
                 if not props:
                     print(col("  ❌  Refresh failed.", C.RED))
                     input("\nPress Enter to continue…")
                     break
+                # Also update match dict in-place so the header re-renders correctly
+                live_score = safe_get(props, "header", "status", "scoreStr", default=None)
+                if live_score:
+                    match["score_str"] = live_score
             elif choice == "1":
                 self._show_stats(props, status, match)
             elif choice == "2":
