@@ -733,11 +733,27 @@ class WorldCupApp:
 
         for event in sorted_events:
             etype    = event.get("type", "event").upper()
-            minute   = event.get("time")        # may be None for penalty/VAR events
+            minute   = event.get("time")        # may be None for some events
             added    = event.get("overloadTime") or 0
             own_goal = bool(event.get("ownGoal"))
             card     = event.get("card", "")
-            is_pen   = bool(event.get("isPenalty") or event.get("pen") or etype == "PENALTY")
+
+            # Penalty detection: FotMob uses goalDescriptionKey="penalty" and suffix="Pen"
+            is_pen = (
+                event.get("goalDescriptionKey") == "penalty"
+                or event.get("suffix") == "Pen"
+                or event.get("isPenalty")
+                or event.get("pen")
+                or (event.get("shotmapEvent") or {}).get("situation") == "Penalty"
+            )
+
+            # Assist: prefer assistInput (clean name), fall back to parsing assistStr
+            assist_name = event.get("assistInput") or None
+            if not assist_name:
+                assist_str = event.get("assistStr") or ""
+                # assistStr format: "assist by Breel Embolo"
+                if assist_str.lower().startswith("assist by "):
+                    assist_name = assist_str[len("assist by "):]
 
             # Build minute string — show "Pen" label if FotMob omits the minute
             if minute is not None:
@@ -769,7 +785,9 @@ class WorldCupApp:
                 if own_goal:
                     desc += col("  (Own Goal)", C.RED)
                 elif is_pen and etype == "GOAL":
-                    desc += col("  (Penalty)", C.CYAN)
+                    desc += col("  (Pen)", C.CYAN)
+                if etype == "GOAL" and assist_name and not own_goal:
+                    desc += col(f"   assists: {assist_name}", C.DIM)
                 elif card:
                     desc += col(f"  ({card})", C.YELLOW)
 
