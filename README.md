@@ -14,7 +14,7 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 - **Live Match Filter** — Dedicated "Live Now" view that appears in the menu only when matches are in progress. Live matches show the current match minute (e.g. `67'`) next to the live badge in both the match list and the Match Center header.
 - **Match Center** — Per-match sub-menu with three views:
   - 📈 **Team Statistics** — color-coded advantage highlighting (green = winning stat, red = losing)
-  - ⏱ **Timeline** — goals (including penalties labelled `Pen` with a `(Penalty)` annotation), cards, substitutions with in/out names, own goals, and proper minute + added-time display
+  - ⏱ **Timeline** — goals with assist credits, penalty goals annotated `(Pen)`, own goals, cards, substitutions with in/out names, and proper minute + added-time display
   - 👥 **Lineups** — starters and substitutes side-by-side with shirt numbers
 - **Live Refresh** — `[R]` inside a live match center re-fetches that match; `[R]` from the main menu refreshes all data.
 - **Live Score Sync** — Every time a match list renders, live match scores are silently re-fetched in the background via a thread pool, so the list is always current without any manual refresh.
@@ -152,15 +152,19 @@ Finished matches are sorted most recent first; upcoming and live matches are sor
   👤  Referee: Anthony Taylor
 ```
 
-### Timeline (with penalty)
+### Timeline
 
 ```
-  90'+2'            ⚽  Mbappe
-  78'               🔄  ▲ Thuram  ▼ Giroud
-  55'               🟨  Bellingham  (YELLOW CARD)
-  Pen               ⚽  Neymar  (Penalty)
-  12'               ⚽  Kane  (Own Goal)
+  90'+7       ⚽  Granit Xhaka  (Pen)
+  90'+3       ⚽  Ermin Mahmic
+  90'         ⚽  Johan Manzambi   assists: Rubén Vargas
+  84'         ⚽  Rubén Vargas   assists: Breel Embolo
+  78'         🔄  ▲ Thuram  ▼ Giroud
+  55'         🟨  Bellingham  (Yellow)
+  12'         ⚽  Kane  (Own Goal)
 ```
+
+Penalty goals are detected via FotMob's `goalDescriptionKey` and `suffix` fields. Assists are sourced from `assistInput`, with a fallback to parsing `assistStr`.
 
 ### Team Statistics
 
