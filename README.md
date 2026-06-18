@@ -39,7 +39,7 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 
 ```bash
 # Clone or download the script
-git clone https://github.com/yourname/world-cup-terminal.git
+git clone https://github.com/Lunatic16/world-cup-terminal.git
 cd world-cup-terminal
 
 # No pip install needed — just run it
