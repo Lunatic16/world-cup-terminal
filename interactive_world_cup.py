@@ -528,7 +528,18 @@ class WorldCupApp:
                     home  = col(f"{m['home']:<22}", C.WHITE)
                     away  = col(f"{m['away']:<22}", C.WHITE)
                     score = score_display(m)
-                    badge = f"  {live_badge()}" if cls == "live" else ""
+                    if cls == "live":
+                        # Pull current minute from cache if already fetched
+                        cached = self._match_cache.get(m["id"])
+                        live_time = safe_get(cached, "header", "status", "liveTime") or {} if cached else {}
+                        minute_str = (
+                            live_time.get("short")
+                            or live_time.get("long")
+                            or safe_get(cached, "header", "status", "liveMinute") if cached else None
+                        )
+                        badge = f"  {live_badge()}" + (f" {col(str(minute_str), C.BGREEN, C.BOLD)}" if minute_str else "")
+                    else:
+                        badge = ""
                     print(f"{num}  {col(tstr, C.DIM):<22}  {home}  {score}  {away}{badge}")
 
             # Pagination footer
@@ -596,7 +607,16 @@ class WorldCupApp:
 
             # Status line
             if cls == "live":
-                print(f"  {live_badge()}  In Progress")
+                live_time = status.get("liveTime", {}) or {}
+                minute_str = (
+                    live_time.get("short")        # e.g. "45'"
+                    or live_time.get("long")       # e.g. "45 min"
+                    or status.get("liveMinute")    # some older payloads
+                )
+                if minute_str:
+                    print(f"  {live_badge()}  {col(str(minute_str), C.BGREEN, C.BOLD)}")
+                else:
+                    print(f"  {live_badge()}  In Progress")
             elif cls == "finished":
                 print(col("  ✅  Full Time", C.BGREEN))
             else:
@@ -703,23 +723,27 @@ class WorldCupApp:
             input("\n  Press Enter to continue…")
             return
 
-        SKIP_TYPES = {"HALF", "ADDEDTIME", "PERIOD", "MATCHEND"}
+        SKIP_TYPES = {"HALF", "ADDEDTIME", "PERIOD", "MATCHEND", "SHOOTOUT", "PENALTYSHOOTOUT"}
 
         sorted_events = sorted(
             (e for e in events if e.get("type", "").upper() not in SKIP_TYPES),
-            key=lambda e: (e.get("time", 0), e.get("overloadTime", 0)),
+            key=lambda e: (e.get("time") or 0, e.get("overloadTime") or 0),
             reverse=True,
         )
 
         for event in sorted_events:
             etype    = event.get("type", "event").upper()
-            minute   = event.get("time", 0)
-            added    = event.get("overloadTime", 0)
+            minute   = event.get("time")        # may be None for penalty/VAR events
+            added    = event.get("overloadTime") or 0
             own_goal = bool(event.get("ownGoal"))
             card     = event.get("card", "")
+            is_pen   = bool(event.get("isPenalty") or event.get("pen") or etype == "PENALTY")
 
-            # Build minute string
-            min_str = f"{minute}'" + (f"+{added}" if added else "")
+            # Build minute string — show "Pen" label if FotMob omits the minute
+            if minute is not None:
+                min_str = f"{minute}'" + (f"+{added}" if added else "")
+            else:
+                min_str = "Pen"
 
             # Build player / description
             if etype == "SUBSTITUTION":
@@ -744,6 +768,8 @@ class WorldCupApp:
                 desc = col(player, C.WHITE)
                 if own_goal:
                     desc += col("  (Own Goal)", C.RED)
+                elif is_pen and etype == "GOAL":
+                    desc += col("  (Penalty)", C.CYAN)
                 elif card:
                     desc += col(f"  ({card})", C.YELLOW)
 
