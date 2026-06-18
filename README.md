@@ -11,10 +11,10 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 - **Group Standings** — Full table for every group (A–L), with qualification spots highlighted in green. Supports `--group` flag to filter to a single group.
 - **Finished Matches** — Paginated list of all completed results with scores, sorted most recent first.
 - **Upcoming & Live Matches** — Full fixture list with kickoff times; live matches are separated into their own filter and highlighted.
-- **Live Match Filter** — Dedicated "Live Now" view that appears in the menu only when matches are in progress.
+- **Live Match Filter** — Dedicated "Live Now" view that appears in the menu only when matches are in progress. Live matches show the current match minute (e.g. `67'`) next to the live badge in both the match list and the Match Center header.
 - **Match Center** — Per-match sub-menu with three views:
   - 📈 **Team Statistics** — color-coded advantage highlighting (green = winning stat, red = losing)
-  - ⏱ **Timeline** — goals, cards, substitutions with in/out names, own goals, and proper minute + added-time display
+  - ⏱ **Timeline** — goals (including penalties labelled `Pen` with a `(Penalty)` annotation), cards, substitutions with in/out names, own goals, and proper minute + added-time display
   - 👥 **Lineups** — starters and substitutes side-by-side with shirt numbers
 - **Live Refresh** — `[R]` inside a live match center re-fetches that match; `[R]` from the main menu refreshes all data.
 - **Live Score Sync** — Every time a match list renders, live match scores are silently re-fetched in the background via a thread pool, so the list is always current without any manual refresh.
@@ -39,7 +39,7 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 
 ```bash
 # Clone or download the script
-git clone https://github.com/Lunatic16/world-cup-terminal.git
+git clone https://github.com/yourname/world-cup-terminal.git
 cd world-cup-terminal
 
 # No pip install needed — just run it
@@ -132,23 +132,33 @@ All menus accept single-key keyboard input. No mouse required.
   4   Morocco                   3   0   2   1   -2    2
 ```
 
-### Match List (finished, most recent first)
+### Match List (live minute shown)
 
 ```
-  [  1]  Jun 17, 21:00   Argentina             3-0   Canada
-  [  2]  Jun 17, 18:00   Spain                 2-1   Morocco
-  [  3]  Jun 16, 15:00   France                vs    Germany         LIVE
-  [  4]  Jun 15, 18:00   Brazil                2-1   Argentina
+  [  1]  Jun 18, 20:00   Brazil         1 - 0  Argentina      LIVE  67'
+  [  2]  Jun 18, 17:00   France         2 - 1  Germany
+  [  3]  Jun 18, 14:00   Spain          vs     Morocco
 ```
 
-Upcoming and live matches are sorted soonest first; finished matches are sorted most recent first.
+Finished matches are sorted most recent first; upcoming and live matches are sorted soonest first. The current match minute is shown next to the live badge once a match has been opened (populated from cache) or after the background score refresh runs.
 
-### Timeline
+### Match Center (live)
+
+```
+  ────── 🏟  Brazil  1 - 0  Argentina ──────
+
+   LIVE   67'
+  🏟  Venue: MetLife Stadium
+  👤  Referee: Anthony Taylor
+```
+
+### Timeline (with penalty)
 
 ```
   90'+2'            ⚽  Mbappe
   78'               🔄  ▲ Thuram  ▼ Giroud
   55'               🟨  Bellingham  (YELLOW CARD)
+  Pen               ⚽  Neymar  (Penalty)
   12'               ⚽  Kane  (Own Goal)
 ```
 
