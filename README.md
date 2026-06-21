@@ -212,7 +212,6 @@ HTTP errors are classified and reported distinctly:
 
 ## Known Limitations
 
-- **UTC times only** — Kickoff times are displayed in UTC. Local timezone conversion is not currently applied.
 - **FotMob dependency** — This tool scrapes public web pages. If FotMob changes their page structure or blocks requests, the app may stop working without notice.
 - **No disk persistence** — The match cache lives in memory for the duration of the session only. Restarting the app clears it.
 - **Python 3.10+ required** — For `str | None` union syntax. Easily backported to 3.9 by replacing with `Optional[str]`.
