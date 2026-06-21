@@ -169,14 +169,23 @@ def parse_utc_time(utc_str: str) -> datetime | None:
     return None
 
 
-def format_kickoff(utc_str: str, local_tz=None) -> str:
-    """Return a human-readable kickoff string. Falls back to raw slice."""
+def format_kickoff(utc_str: str, local_tz=None, show_tz: bool = False) -> str:
+    """
+    Return a human-readable kickoff string, converted to local time.
+
+    By default, converts to the system's local timezone (whatever the OS
+    reports). Pass local_tz=timezone.utc to force UTC, or any other
+    tzinfo to convert to a specific zone. Falls back to a raw slice of
+    the input on parse failure.
+    """
     dt = parse_utc_time(utc_str)
     if dt is None:
         return utc_str[:16] if len(utc_str) >= 16 else utc_str
-    if local_tz:
-        dt = dt.astimezone(local_tz)
-    return dt.strftime("%b %d, %H:%M")
+    # Default: convert to the machine's local timezone. astimezone() with
+    # no argument (or None) uses the system local timezone automatically.
+    dt = dt.astimezone(local_tz)
+    fmt = "%b %d, %I:%M %p %Z" if show_tz else "%b %d, %I:%M %p"
+    return dt.strftime(fmt)
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +533,7 @@ class WorldCupApp:
                 for i, m in enumerate(page_items):
                     num   = col(f"  [{offset + i + 1:>3}]", C.DIM)
                     cls   = classify_match(m)
-                    tstr  = format_kickoff(m["utc_time"]) if m["utc_time"] else ""
+                    tstr  = format_kickoff(m["utc_time"], show_tz=True) if m["utc_time"] else ""
                     home  = col(f"{m['home']:<22}", C.WHITE)
                     away  = col(f"{m['away']:<22}", C.WHITE)
                     score = score_display(m)
@@ -620,8 +629,8 @@ class WorldCupApp:
             elif cls == "finished":
                 print(col("  ✅  Full Time", C.BGREEN))
             else:
-                kt = format_kickoff(match["utc_time"]) if match["utc_time"] else "TBD"
-                print(col(f"  🕐  Kick-off: {kt} UTC", C.DIM))
+                kt = format_kickoff(match["utc_time"], show_tz=True) if match["utc_time"] else "TBD"
+                print(col(f"  🕐  Kick-off: {kt}", C.DIM))
 
             # Venue / referee
             info_box = safe_get(props, "content", "matchFacts", "infoBox", default={})
