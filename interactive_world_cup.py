@@ -540,6 +540,19 @@ class WorldCupApp:
     # Standings
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _row_int(row: dict, *keys, default: int = 0) -> int:
+        """Return the first present integer-ish value among the given keys."""
+        for k in keys:
+            v = row.get(k)
+            if isinstance(v, bool):
+                continue
+            if isinstance(v, (int, float)):
+                return int(v)
+            if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+                return int(v)
+        return default
+
     def show_standings(self) -> None:
         if not self.overview_data:
             print(col("❌  No standings data available.", C.RED))
@@ -579,12 +592,12 @@ class WorldCupApp:
             for row in rows:
                 idx  = row.get("idx", "-")
                 name = row.get("name") or row.get("shortName") or "TBD"
-                pld  = row.get("p", 0)
-                w    = row.get("w", 0)
-                d    = row.get("d", 0)
-                l    = row.get("l", 0)
-                gd   = row.get("goalConDiff", 0)
-                pts  = row.get("pts", 0)
+                pld  = self._row_int(row, "played", "p", "matchesPlayed")
+                w    = self._row_int(row, "wins", "w")
+                d    = self._row_int(row, "draws", "d")
+                l    = self._row_int(row, "losses", "loses", "l")
+                gd   = self._row_int(row, "goalConDiff", "gd")
+                pts  = self._row_int(row, "pts", "points")
                 gd_str = f"+{gd}" if gd > 0 else str(gd)
 
                 # Highlight top 2 (qualification spots)
