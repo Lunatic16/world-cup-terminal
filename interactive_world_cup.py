@@ -275,7 +275,9 @@ class WorldCupApp:
         self.league_id = 77  # FotMob's ID for the FIFA World Cup
         self.overview_data: dict | None = None
         self.matches_data: dict | None = None
+        self.knockout_data: dict | None = None
         self.matches_list: list[dict] = []
+        self.knockout_rounds: list[dict] = []
         # In-memory match-detail cache  {match_id -> props_dict}
         self._match_cache: dict[str, dict] = {}
 
@@ -292,6 +294,13 @@ class WorldCupApp:
 
     def _fetch_fixtures(self) -> dict | None:
         url = f"https://www.fotmob.com/leagues/{self.league_id}?season={self.season}"
+        return fetch_nextjs_data(url)
+
+    def _fetch_knockout(self) -> dict | None:
+        url = (
+            f"https://www.fotmob.com/leagues/{self.league_id}"
+            f"/playoff/world-cup?season={self.season}"
+        )
         return fetch_nextjs_data(url)
 
     def _parse_matches(self, matches_data: dict) -> list[dict]:
@@ -315,23 +324,142 @@ class WorldCupApp:
             })
         return result
 
+    @staticmethod
+    def _team_name(team_obj) -> str:
+        if not isinstance(team_obj, dict):
+            return "TBD"
+        return (
+            team_obj.get("name")
+            or team_obj.get("shortName")
+            or team_obj.get("teamName")
+            or "TBD"
+        )
+
+    def _match_summary(self, node: dict) -> dict:
+        """
+        Pull id/teams/score/kickoff/status out of a matchup-shaped dict,
+        tolerating a few different FotMob field-naming conventions (the
+        playoff page's exact schema wasn't verifiable while writing this,
+        so this is intentionally permissive).
+        """
+        status = node.get("status") or {}
+        home = node.get("home") or node.get("homeTeam") or {}
+        away = node.get("away") or node.get("awayTeam") or {}
+        score = (
+            node.get("scoreStr")
+            or status.get("scoreStr")
+            or node.get("score")
+        )
+        return {
+            "id":        str(node.get("id") or node.get("matchId") or ""),
+            "home":      self._team_name(home),
+            "away":      self._team_name(away),
+            "finished":  bool(node.get("finished") or status.get("finished")),
+            "started":   bool(node.get("started") or status.get("started")),
+            "score_str": score if score else "vs",
+            "utc_time":  node.get("utcTime") or status.get("utcTime") or "",
+            "page_url":  node.get("pageUrl") or node.get("matchUrl") or "",
+        }
+
+    def _normalize_bracket_rounds(self, rounds_raw: list) -> list[dict]:
+        out = []
+        for r in rounds_raw:
+            if not isinstance(r, dict):
+                continue
+            name = (
+                r.get("name")
+                or r.get("roundName")
+                or r.get("stageName")
+                or r.get("leagueRoundName")
+                or "Round"
+            )
+            matchups_raw = (
+                r.get("matchups") or r.get("matches")
+                or r.get("ties") or r.get("legPairs") or []
+            )
+            matches = []
+            for mu in matchups_raw:
+                if not isinstance(mu, dict):
+                    continue
+                # Some payloads nest the actual match(es) one level deeper
+                # (e.g. a "tie" containing one or more "legs"/"matches").
+                inner = mu.get("matches") or mu.get("legs")
+                if isinstance(inner, list) and inner:
+                    for leg in inner:
+                        if isinstance(leg, dict):
+                            matches.append(self._match_summary({**mu, **leg}))
+                else:
+                    matches.append(self._match_summary(mu))
+            if matches:
+                out.append({"name": name, "matches": matches})
+        return out
+
+    def _find_rounds_recursive(self, node, depth: int = 0):
+        """Fallback: hunt the payload for a list of round-shaped dicts."""
+        if depth > 6 or not isinstance(node, (dict, list)):
+            return None
+        if isinstance(node, list):
+            sample = [x for x in node[:3] if isinstance(x, dict)]
+            if sample:
+                keys = set().union(*(x.keys() for x in sample))
+                has_matches = {"matchups", "matches", "ties", "legPairs"} & keys
+                has_name = {"name", "roundName", "stageName", "leagueRoundName"} & keys
+                if has_matches and has_name:
+                    return node
+            for item in node:
+                found = self._find_rounds_recursive(item, depth + 1)
+                if found:
+                    return found
+        elif isinstance(node, dict):
+            for v in node.values():
+                found = self._find_rounds_recursive(v, depth + 1)
+                if found:
+                    return found
+        return None
+
+    def _parse_knockout(self, props: dict | None) -> list[dict]:
+        """Parse the playoff/bracket payload into [{name, matches: [...]}, ...]."""
+        if not isinstance(props, dict):
+            return []
+
+        for key in ("knockoutBracket", "bracket", "playoff", "knockout"):
+            node = props.get(key)
+            if isinstance(node, dict) and isinstance(node.get("rounds"), list):
+                parsed = self._normalize_bracket_rounds(node["rounds"])
+                if parsed:
+                    return parsed
+            if isinstance(node, list) and node:
+                parsed = self._normalize_bracket_rounds(node)
+                if parsed:
+                    return parsed
+
+        found = self._find_rounds_recursive(props)
+        if found:
+            return self._normalize_bracket_rounds(found)
+
+        return []
+
     def load_data(self) -> bool:
         """
-        Concurrently fetch overview + fixtures using a thread pool
-        (asyncio event loop runs both urllib calls in parallel).
+        Concurrently fetch overview + fixtures + knockout bracket using a
+        thread pool (all urllib calls run in parallel).
         """
         print(col("🔄  Loading World Cup data from FotMob …", C.CYAN))
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             fut_overview  = pool.submit(self._fetch_overview)
             fut_fixtures  = pool.submit(self._fetch_fixtures)
+            fut_knockout  = pool.submit(self._fetch_knockout)
             self.overview_data = fut_overview.result()
             self.matches_data  = fut_fixtures.result()
+            self.knockout_data = fut_knockout.result()
 
         if self.matches_data:
             self.matches_list = self._parse_matches(self.matches_data)
         else:
             self.matches_list = []
+
+        self.knockout_rounds = self._parse_knockout(self.knockout_data)
 
         if self.overview_data is None and self.matches_data is None:
             return False
@@ -470,6 +598,195 @@ class WorldCupApp:
                     + col(f"{pts:>3}", pts_col + rank_col)
                 )
             print()
+
+        input(col("  Press Enter to return to main menu…", C.DIM))
+
+    # ------------------------------------------------------------------
+    # Knockout bracket
+    # ------------------------------------------------------------------
+
+    # Canonical column headers, keyed by how many matches are in that
+    # round (independent of whatever label FotMob's payload itself uses).
+    _ROUND_NAMES_BY_SIZE = {
+        16: "Round of 32",
+        8:  "Round of 16",
+        4:  "Quarterfinals",
+        2:  "Semifinals",
+        1:  "Final",
+    }
+
+    @classmethod
+    def _canonical_round_name(cls, match_count: int, fallback: str) -> str:
+        return cls._ROUND_NAMES_BY_SIZE.get(match_count, fallback)
+
+    @staticmethod
+    def _split_score(score_str: str):
+        """'2 - 1' -> (2, 1); returns (None, None) if unparseable."""
+        if not score_str:
+            return None, None
+        parts = re.split(r"\s*-\s*", score_str.strip())
+        if len(parts) != 2:
+            return None, None
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            return None, None
+
+    @staticmethod
+    def _trunc(text: str, width: int) -> str:
+        if len(text) <= width:
+            return text
+        return text[: max(1, width - 1)] + "…"
+
+    def _team_slot_text(self, m: dict, side: str, width: int) -> str:
+        """Plain (uncolored) display text for one team slot in the bracket."""
+        name = m["home"] if side == "home" else m["away"]
+        name = name or "TBD"
+        goals_h, goals_a = self._split_score(m.get("score_str", "")) if m.get("finished") else (None, None)
+        suffix = ""
+        if goals_h is not None:
+            g = goals_h if side == "home" else goals_a
+            suffix = f" {g}"
+        avail = width - len(suffix)
+        return self._trunc(name, max(1, avail)) + suffix
+
+    def _render_bracket_tree(self, rounds: list[dict]) -> list[str] | None:
+        """
+        Build an ASCII tournament-bracket tree from self.knockout_rounds.
+        Returns a list of plain (uncolored — caller applies color) text
+        lines, or None if the round shape doesn't look like a clean
+        single-elimination tree (caller should fall back to the simple
+        per-round list view in that case).
+        """
+        if not rounds or not rounds[0]["matches"]:
+            return None
+
+        n0 = len(rounds[0]["matches"])
+        R = len(rounds)
+        # Verify each round roughly halves the previous one (standard
+        # single-elimination shape) before committing to a tree layout.
+        expected = n0
+        for r in range(1, R):
+            expected = max(1, (expected + 1) // 2)
+            if len(rounds[r]["matches"]) != expected:
+                return None
+
+        GUTTER_W = 3
+        # Pick a column width that keeps the whole bracket near 100 cols.
+        col_width = max(10, min(20, (100 - GUTTER_W * (R - 1)) // R))
+        block = 4  # rows consumed per round-0 match: home, blank, away, spacer
+
+        # layout[r] = list of dicts {row_home, row_away, center} per match
+        layout: list[list[dict]] = [[] for _ in range(R)]
+        for i in range(n0):
+            rh = i * block
+            ra = i * block + 2
+            layout[0].append({"row_home": rh, "row_away": ra, "center": rh + 1})
+
+        for r in range(1, R):
+            prev = layout[r - 1]
+            n_r = len(rounds[r]["matches"])
+            for j in range(n_r):
+                fa, fb = 2 * j, 2 * j + 1
+                if fb < len(prev):
+                    rh, ra = prev[fa]["center"], prev[fb]["center"]
+                elif fa < len(prev):
+                    rh = ra = prev[fa]["center"]
+                else:
+                    return None  # malformed shape — bail to fallback view
+                layout[r].append({"row_home": rh, "row_away": ra, "center": (rh + ra) // 2})
+
+        total_rows = n0 * block
+
+        # text_rows[r] = {row: text}
+        text_rows: list[dict] = [dict() for _ in range(R)]
+        for r in range(R):
+            for j, m in enumerate(rounds[r]["matches"]):
+                d = layout[r][j]
+                text_rows[r][d["row_home"]] = self._team_slot_text(m, "home", col_width)
+                text_rows[r][d["row_away"]] = self._team_slot_text(m, "away", col_width)
+
+        def gutter_char(row: int, r: int) -> str:
+            for d in layout[r]:
+                rh, ra, c = d["row_home"], d["row_away"], d["center"]
+                if rh == ra:
+                    continue
+                if row == rh:
+                    return "─┐ "
+                if row == ra:
+                    return "─┘ "
+                if row == c:
+                    return " ├─"
+                if rh < row < ra:
+                    return " │ "
+            return "   "
+
+        lines = []
+        for row in range(total_rows):
+            parts = []
+            for r in range(R):
+                parts.append(text_rows[r].get(row, "").ljust(col_width))
+                if r < R - 1:
+                    parts.append(gutter_char(row, r))
+            lines.append("".join(parts).rstrip())
+
+        while lines and not lines[-1].strip():
+            lines.pop()
+
+        header = "   ".join(
+            self._trunc(
+                self._canonical_round_name(len(rounds[r]["matches"]), rounds[r]["name"]),
+                col_width,
+            ).center(col_width)
+            for r in range(R)
+        )
+        return [header, "─" * len(header)] + lines
+
+    def _show_knockout_list(self) -> None:
+        """Fallback: simple round-by-round list (used if the bracket-tree
+        renderer can't make sense of the round shapes)."""
+        for rnd in self.knockout_rounds:
+            label = self._canonical_round_name(len(rnd["matches"]), rnd["name"])
+            print(col(f"  🔸 {label}", C.BOLD, C.CYAN))
+            print(col("  " + "─" * 56, C.DIM))
+            for m in rnd["matches"]:
+                cls   = classify_match(m)
+                tstr  = format_kickoff(m["utc_time"], show_tz=True) if m["utc_time"] else "TBD"
+                home  = col(f"{m['home']:<22}", C.WHITE)
+                away  = col(f"{m['away']:<22}", C.WHITE)
+                score = score_display(m)
+                badge = f"  {live_badge()}" if cls == "live" else ""
+                print(f"  {col(tstr, C.DIM):<22}  {home}  {score}  {away}{badge}")
+            print()
+
+    def show_knockout(self) -> None:
+        if not self.knockout_rounds:
+            print(col("\n❌  Knockout bracket not available.", C.YELLOW))
+            print(col("    Either FotMob hasn't published it yet for this season,", C.DIM))
+            print(col("    or this script's parser didn't recognize the page layout.", C.DIM))
+            if isinstance(self.knockout_data, dict) and self.knockout_data:
+                top_keys = ", ".join(sorted(self.knockout_data.keys())[:15])
+                print(col(f"\n    Debug — top-level keys on the playoff page: {top_keys}", C.DIM))
+                print(col("    (Share these with whoever maintains this script to fix parsing.)", C.DIM))
+            input(col("\n  Press Enter to return to main menu…", C.DIM))
+            return
+
+        print(f"\n{header_line(f'🏆  FIFA World Cup {self.season} — Knockout Bracket', 60)}\n")
+
+        try:
+            tree_lines = self._render_bracket_tree(self.knockout_rounds)
+        except Exception:
+            tree_lines = None
+
+        if tree_lines:
+            print(col(tree_lines[0], C.BOLD, C.CYAN))
+            print(col(tree_lines[1], C.DIM))
+            for line in tree_lines[2:]:
+                print("  " + line)
+            print()
+        else:
+            print(col("  (Bracket shape didn't fit a clean tree layout — showing as a list instead.)\n", C.DIM))
+            self._show_knockout_list()
 
         input(col("  Press Enter to return to main menu…", C.DIM))
 
@@ -881,10 +1198,11 @@ class WorldCupApp:
                 print(col(f"  {live_badge()}  {live_count} match{'es' if live_count != 1 else ''} in progress\n", C.BGREEN))
 
             print(f"  {col('[1]', C.CYAN)}  Group Standings")
-            print(f"  {col('[2]', C.CYAN)}  Finished Matches")
-            print(f"  {col('[3]', C.CYAN)}  Upcoming & Live Matches")
+            print(f"  {col('[2]', C.CYAN)}  Knockout Bracket")
+            print(f"  {col('[3]', C.CYAN)}  Finished Matches")
+            print(f"  {col('[4]', C.CYAN)}  Upcoming & Live Matches")
             if live_count:
-                print(f"  {col('[4]', C.BGREEN)}  Live Matches Only")
+                print(f"  {col('[5]', C.BGREEN)}  Live Matches Only")
             print(f"  {col('[R]', C.BYELLOW)}  Refresh Data")
             print(f"  {col('[Q]', C.DIM)}  Quit")
 
@@ -896,10 +1214,12 @@ class WorldCupApp:
             elif choice == "1":
                 self.show_standings()
             elif choice == "2":
-                self.show_matches(mode="finished")
+                self.show_knockout()
             elif choice == "3":
+                self.show_matches(mode="finished")
+            elif choice == "4":
                 self.show_matches(mode="upcoming_live")
-            elif choice == "4" and live_count:
+            elif choice == "5" and live_count:
                 self.show_matches(mode="live")
             elif choice == "r":
                 self.refresh_data()
