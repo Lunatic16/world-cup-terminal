@@ -9,8 +9,9 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 ## Features
 
 - **Group Standings** — Full table for every group (A–L), with qualification spots highlighted in green. Supports `--group` flag to filter to a single group.
+- **Knockout Bracket** — Round of 32 through the Final rendered as an actual ASCII tournament tree, with connector lines joining each match to its slot in the next round. Finished matches show each team's goals next to their name. Falls back automatically to a simple per-round list if the bracket data doesn't form a clean tree shape (e.g. before the bracket is fully populated).
 - **Finished Matches** — Paginated list of all completed results with scores, sorted most recent first.
-- **Upcoming & Live Matches** — Full fixture list with kickoff times; live matches are separated into their own filter and highlighted.
+- **Upcoming & Live Matches** — Full fixture list with kickoff times converted to your machine's local timezone (12-hour clock with AM/PM, e.g. `Jun 18, 08:00 PM EDT`); live matches are separated into their own filter and highlighted.
 - **Live Match Filter** — Dedicated "Live Now" view that appears in the menu only when matches are in progress. Live matches show the current match minute (e.g. `67'`) next to the live badge in both the match list and the Match Center header.
 - **Match Center** — Per-match sub-menu with three views:
   - 📈 **Team Statistics** — color-coded advantage highlighting (green = winning stat, red = losing)
@@ -21,7 +22,7 @@ Data is sourced in real time from [FotMob](https://www.fotmob.com) via their pub
 - **Paginated Match Lists** — 20 matches per page with `[N]ext` / `[P]rev` navigation.
 - **Team Search** — Filter any match list by typing `/` and a team name.
 - **ANSI Color Output** — Goals in green, red cards in red, yellow cards in yellow, live badges highlighted. Degrades gracefully on terminals without color support (including Windows CMD).
-- **Concurrent Data Loading** — Overview and fixture endpoints are fetched in parallel via a thread pool, cutting startup time roughly in half.
+- **Concurrent Data Loading** — Overview, fixture, and knockout-bracket endpoints are all fetched in parallel via a thread pool, cutting startup time roughly in a third compared to fetching sequentially.
 - **argparse CLI** — `--season`, `--group`, and `--help` flags; backwards-compatible with the old positional argument.
 
 ---
@@ -90,9 +91,10 @@ All menus accept single-key keyboard input. No mouse required.
    LIVE   2 matches in progress
 
   [1]  Group Standings
-  [2]  Finished Matches
-  [3]  Upcoming & Live Matches
-  [4]  Live Matches Only          ← appears only when matches are live
+  [2]  Knockout Bracket
+  [3]  Finished Matches
+  [4]  Upcoming & Live Matches
+  [5]  Live Matches Only          ← appears only when matches are live
   [R]  Refresh Data
   [Q]  Quit
 ```
@@ -135,12 +137,36 @@ All menus accept single-key keyboard input. No mouse required.
 ### Match List (live minute shown)
 
 ```
-  [  1]  Jun 18, 20:00   Brazil         1 - 0  Argentina      LIVE  67'
-  [  2]  Jun 18, 17:00   France         2 - 1  Germany
-  [  3]  Jun 18, 14:00   Spain          vs     Morocco
+  [  1]  Jun 18, 08:00 PM EDT   Brazil         1 - 0  Argentina      LIVE  67'
+  [  2]  Jun 18, 05:00 PM EDT   France         2 - 1  Germany
+  [  3]  Jun 18, 02:00 PM EDT   Spain          vs     Morocco
 ```
 
-Finished matches are sorted most recent first; upcoming and live matches are sorted soonest first. The current match minute is shown next to the live badge once a match has been opened (populated from cache) or after the background score refresh runs.
+Kickoff times are converted from FotMob's UTC timestamps to your machine's local timezone automatically (no configuration needed) and shown in 12-hour clock format with the zone abbreviation. Finished matches are sorted most recent first; upcoming and live matches are sorted soonest first. The current match minute is shown next to the live badge once a match has been opened (populated from cache) or after the background score refresh runs.
+
+### Knockout Bracket
+
+```
+   Round of 16          Quarterfinals        Semifinals
+─────────────────────────────────────────────────────────
+Brazil 2          ─┐
+                   ├─Brazil            ─┐
+Mexico 0          ─┘                    │
+                                        ├─TBD
+Argentina         ─┐                    │
+                   ├─TBD               ─┘
+Uruguay            ─┘
+
+France 3          ─┐
+                   ├─France            ─┐
+Germany 2         ─┘                    │
+                                        ├─TBD
+Spain              ─┐                   │
+                   ├─TBD               ─┘
+Italy              ─┘
+```
+
+Column headers (`Round of 32`, `Round of 16`, `Quarterfinals`, `Semifinals`, `Final`) are derived from how many matches are in each round, not from whatever label FotMob's payload happens to use, so they stay consistent regardless of upstream naming. If the fetched bracket data doesn't form a clean halving shape (common before the bracket is fully seeded), the view automatically falls back to a simple per-round list instead of drawing a broken tree.
 
 ### Match Center (live)
 
@@ -185,15 +211,16 @@ Penalty goals are detected via FotMob's `goalDescriptionKey` and `suffix` fields
 
 FotMob embeds the full page state as a JSON blob inside a `<script id="__NEXT_DATA__">` tag on every page. This script parses that tag using Python's stdlib `html.parser` (more robust than a regex) and extracts the `pageProps` payload — no browser automation, no headless Chrome, no paid API.
 
-Three endpoints are used:
+Four endpoints are used:
 
 | Endpoint | Purpose |
 |---|---|
 | `/leagues/77/overview/world-cup?season=YEAR` | Standings (group tables) |
 | `/leagues/77?season=YEAR` | Full fixture list |
+| `/leagues/77/playoff/world-cup?season=YEAR` | Knockout bracket |
 | `/matches/<slug>` | Individual match details (stats, events, lineups) |
 
-The league ID `77` is FotMob's internal identifier for the FIFA World Cup. Both the overview and fixture endpoints are fetched concurrently at startup using `concurrent.futures.ThreadPoolExecutor`.
+The league ID `77` is FotMob's internal identifier for the FIFA World Cup. The overview, fixture, and knockout-bracket endpoints are all fetched concurrently at startup using `concurrent.futures.ThreadPoolExecutor`.
 
 ---
 
@@ -213,6 +240,7 @@ HTTP errors are classified and reported distinctly:
 ## Known Limitations
 
 - **FotMob dependency** — This tool scrapes public web pages. If FotMob changes their page structure or blocks requests, the app may stop working without notice.
+- **Knockout bracket parsing is best-effort** — The playoff page's exact JSON field names weren't verifiable while this was built, so `_parse_knockout` tries several plausible FotMob naming conventions and falls back to a generic recursive search if those don't match. If the Knockout menu reports "not available" and shows a list of top-level keys, that's a signal the parser needs a small patch to match the real field names.
 - **No disk persistence** — The match cache lives in memory for the duration of the session only. Restarting the app clears it.
 - **Python 3.10+ required** — For `str | None` union syntax. Easily backported to 3.9 by replacing with `Optional[str]`.
 
